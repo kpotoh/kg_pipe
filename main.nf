@@ -58,7 +58,7 @@ fi
 }
 
 
-process blast_result2fasta {
+process mview {
 
 input:
  file blast_report from g_125_blast_output_g_126
@@ -190,7 +190,7 @@ input:
  set val(name), file(mulal) from g_128_nucl_mulal_g_151
 
 output:
- set val("leaves_states"), file("leaves_states.state")  into g_151_state_g_154, g_151_state_g_160, g_151_state_g_162
+ set val("leaves_states"), file("leaves_states.state")  into g_151_state_g_177, g_151_state_g_178
 
 """
 python3 /export/src/mutspec-utils/scripts/alignment2iqtree_states.py $mulal leaves_states.state
@@ -204,7 +204,7 @@ input:
  set val(name), file(mulal) from g_128_nucl_mulal_g_129
 
 output:
- set val(name), file("${name}.phy")  into g_129_phylip_g_130, g_129_phylip_g_143, g_129_phylip_g_145, g_129_phylip_g_158
+ set val(name), file("${name}.phy")  into g_129_phylip_g_130, g_129_phylip_g_145, g_129_phylip_g_158, g_129_phylip_g_174
 
 """
 java -jar /opt/readseq.jar -a -f Phylip -o ${name}.phy $mulal
@@ -221,7 +221,8 @@ process IQTREE_build_tree {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /.*.log$/) "IQTREE/$filename"
+	if (filename =~ /iqtree.nwk$/) "tmp/$filename"
+	else if (filename =~ /.*.log$/) "IQTREE/$filename"
 }
 
 input:
@@ -268,11 +269,16 @@ nw_distance -m p -s l -n $tree | sort -grk 2 1>${name}.branches
 
 process rooting_iqtree_tree {
 
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /.*.nwk$/) "tmp/$filename"
+}
+
 input:
  set val(name), file(tree) from g_145_tree_g_131
 
 output:
- set val("${name}_rooted"), file("*.nwk")  into g_131_tree_g_143
+ set val("${name}_rooted"), file("*.nwk")  into g_131_tree_g_174
 
 """
 nw_reroot -l $tree OUTGRP 1>${name}_rooted.nwk
@@ -281,23 +287,23 @@ nw_reroot -l $tree OUTGRP 1>${name}_rooted.nwk
 }
 
 
-process IQTREE_anc_rec {
+process IQTREE_anc {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /iqtree_anc.state$/) "IQTREE/$filename"
+	if (filename =~ /iqtree_anc.state$/) "tmp/$filename"
 	else if (filename =~ /iqtree_anc_tree.nwk$/) "IQTREE/$filename"
 	else if (filename =~ /.*.log$/) "IQTREE/$filename"
 }
 
 input:
- set val(name), file(mulal) from g_129_phylip_g_143
- set val(namet), file(tree) from g_131_tree_g_143
+ set val(name), file(mulal) from g_129_phylip_g_174
+ set val(namet), file(tree) from g_131_tree_g_174
 
 output:
- set val(name), file("iqtree_anc.state")  into g_143_state_g_162
- set val("iqtree_anc_tree"), file("iqtree_anc_tree.nwk")  into g_143_tree_g_154
- file "*.log"  into g_143_logFile
+ set val("iqtree_anc"), file("iqtree_anc.state")  into g_174_state_g_163
+ set val("iqtree_anc_tree"), file("iqtree_anc_tree.nwk")  into g_174_tree_g_177
+ file "*.log"  into g_174_logFile
 
 """
 iqtree2 -s $mulal -m $params.IQTREE_model -asr -nt $THREADS --prefix anc
@@ -311,33 +317,46 @@ mv anc.treefile iqtree_anc_tree.nwk
 
 process iqtree_states_customization {
 
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /${name}_custom.state$/) "IQTREE/$filename"
+}
+
 input:
- set val(name), file(states) from g_143_state_g_162
- set val(lname), file(leaves) from g_151_state_g_162
+ set val(name), file(states) from g_174_state_g_163
 
 output:
- set val("${name}_custom"), file("${name}_custom.state")  into g_162_state_g_154
+ set val("${name}_custom"), file("${name}_custom.state")  into g_163_state_g_177
 
 """
-python3 2.iqtree_states2custom_format.py --anc $states --leaves $leaves --out ${name}_custom.state
+python3 /export/src/mutspec-utils/scripts/iqtree_states_add_part.py $states ${name}_custom.state
 """
 }
 
-g_151_state_g_154= g_151_state_g_154.ifEmpty([""]) 
-
-ms_options = params.calculate_mutspec_iqtree.ms_options
+ms_options = params.mutations_iqtree.ms_options
 
 
-process calculate_mutspec_iqtree {
+process mutations_iqtree {
+
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /.*.tsv$/) "mutspec_iqtree/$filename"
+	else if (filename =~ /.*.log$/) "mutspec_iqtree/$filename"
+}
 
 input:
- set val(namet), file(tree) from g_143_tree_g_154
- set val(names1), file(states1) from g_162_state_g_154
- set val(names2), file(states2) from g_151_state_g_154
+ set val(namet), file(tree) from g_174_tree_g_177
+ set val(names1), file(states1) from g_163_state_g_177
+ set val(names2), file(states2) from g_151_state_g_177
 
+output:
+ file "*.tsv"  into g_177_outputFileTSV
+ file "*.log"  into g_177_logFile
 
 """
 python3 /export/src/mutspec-utils/scripts/3.calculate_mutspec.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $ms_options --outdir mout
+mv mout/* .
+
 """
 }
 
@@ -347,6 +366,11 @@ raxml_model = params.RAxML_build_tree.raxml_model
 
 
 process RAxML_build_tree {
+
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /raxml.nwk$/) "tmp/$filename"
+}
 
 input:
  set val(name), file(mulal) from g_129_phylip_g_130
@@ -370,14 +394,14 @@ process rooting_raxml_tree {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /.*.nwk$/) "RAxML/$filename"
+	if (filename =~ /.*.nwk$/) "tmp/$filename"
 }
 
 input:
  set val(name), file(tree) from g_130_tree_g_111
 
 output:
- set val("${name}_rooted"), file("*.nwk")  into g_111_tree_g_158, g_111_tree_g_160
+ set val("${name}_rooted"), file("*.nwk")  into g_111_tree_g_158, g_111_tree_g_178
 
 """
 nw_reroot -l $tree OUTGRP 1>${name}_rooted.nwk
@@ -386,11 +410,11 @@ nw_reroot -l $tree OUTGRP 1>${name}_rooted.nwk
 }
 
 
-process RAxML_anc_rec {
+process RAxML_anc {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /RAxML_nodeLabelledRootedTree.nwk$/) "RAxML/$filename"
+	if (filename =~ /RAxML_nodeLabelledRootedTree.nwk$/) "tmp/$filename"
 	else if (filename =~ /RAxML_anc_rec.log$/) "RAxML/$filename"
 }
 
@@ -417,32 +441,46 @@ mv RAxML_nodeLabelledRootedTree.ANCESTORS RAxML_nodeLabelledRootedTree.nwk
 
 process raxml_states_conversion {
 
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /${name}.state$/) "RAxML/$filename"
+}
+
 input:
  set val(name), file(rstates) from g_158_outputFileTxt_g_161
 
 output:
- set val(name), file("${name}.state")  into g_161_state_g_160
+ set val(name), file("${name}.state")  into g_161_state_g_178
 
 """
 python3 /export/src/mutspec-utils/scripts/raxml_states2iqtree_states.py $rstates ${name}.state
 """
 }
 
-g_151_state_g_160= g_151_state_g_160.ifEmpty([""]) 
-
-ms_options = params.calculate_mutspec_raxml.ms_options
+ms_options = params.mutations_raxml.ms_options
 
 
-process calculate_mutspec_raxml {
+process mutations_raxml {
+
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /.*.tsv$/) "mutspec_raxml/$filename"
+	else if (filename =~ /.*.log$/) "mutspec_raxml/$filename"
+}
 
 input:
- set val(namet), file(tree) from g_111_tree_g_160
- set val(names1), file(states1) from g_161_state_g_160
- set val(names2), file(states2) from g_151_state_g_160
+ set val(namet), file(tree) from g_111_tree_g_178
+ set val(names1), file(states1) from g_161_state_g_178
+ set val(names2), file(states2) from g_151_state_g_178
 
+output:
+ file "*.tsv"  into g_178_outputFileTSV
+ file "*.log"  into g_178_logFile
 
 """
 python3 /export/src/mutspec-utils/scripts/3.calculate_mutspec.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $ms_options --outdir mout
+mv mout/* .
+
 """
 }
 
