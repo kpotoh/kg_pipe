@@ -14,43 +14,92 @@ if (!params.species_name){params.species_name = ""}
 if (!params.sequence){params.sequence = ""} 
 if (!params.Mt_DB){params.Mt_DB = ""} 
 if (!params.mode){params.mode = ""} 
+if (!params.gencode){params.gencode = ""} 
+if (!params.outgroup_name){params.outgroup_name = ""} 
 
 Channel.value(params.species_name).set{g_1_species_name_g_49}
-g_2_multipleFasta_g_206 = file(params.sequence, type: 'any') 
-g_2_multipleFasta_g_212 = file(params.sequence, type: 'any') 
-Channel.value(params.Mt_DB).into{g_15_commondb_path_g_205;g_15_commondb_path_g_208}
-Channel.value(params.mode).into{g_193_mode_g_206;g_193_mode_g_212}
+g_2_multipleFasta_g_229 = file(params.sequence, type: 'any') 
+Channel.value(params.Mt_DB).into{g_15_commondb_path_g_213;g_15_commondb_path_g_221}
+Channel.value(params.mode).set{g_193_mode_g_229}
+Channel.value(params.gencode).into{g_220_gencode_g_221;g_220_gencode_g_222}
 
-
-if (!(params.mode == "single")){
-g_2_multipleFasta_g_206.set{g_206_multipleFasta_g_205}
-} else {
 
 process query_qc {
 
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /query_single.fasta$/) "tmp/$filename"
+	else if (filename =~ /query_multiple.fasta$/) "tmp/$filename"
+}
+
 input:
- file query from g_2_multipleFasta_g_206
- val mode from g_193_mode_g_206
+ file query from g_2_multipleFasta_g_229
+ val mode from g_193_mode_g_229
 
 output:
- file "query_single.fasta"  into g_206_multipleFasta_g_205
+ file "query_single.fasta" optional true  into g_229_multipleFasta_g_221
+ file "query_multiple.fasta" optional true  into g_229_multipleFasta_g_239
+
+"""
+if [ $mode == "single" ]; then
+	if [ `grep -c ">" $query` -eq 1 ]; then 
+		mv $query query_single.fasta
+	else
+		echo "Query file must contain only one record when mode == 'single'"
+		exit 1
+	fi
+elif [ $mode == "multiple" ]; then
+	if [ `grep -c ">" $query` -gt 1 ]; then 
+		mv $query query_multiple.fasta
+	else
+		echo "Query file must contain more than one record when mode == 'multiple'"
+		exit 1
+	fi
+fi
+
+"""
+}
+
+g_229_multipleFasta_g_239= g_229_multipleFasta_g_239.ifEmpty([""]) 
+
+
+if (!(params.mode == "multiple")){
+g_229_multipleFasta_g_239.set{g_239_multipleFasta_g_277}
+} else {
+
+process qc_aln {
+
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /sequences.fasta$/) "tmp/$filename"
+}
+
+input:
+ file query from g_229_multipleFasta_g_239
+
+output:
+ file "sequences.fasta"  into g_239_multipleFasta_g_277
 
 when:
-params.mode == "single"
+params.mode == "multiple"
 
 script:
+
 """
-if [ `grep -c ">" $query` -eq 1 ]
+if [ `grep -c ">" $query` -gt 1 ]
 then 
-	mv $query query_single.fasta
+	mv $query sequences.fasta
 else
-	echo "Query file must contain only one record when mode == 'single'"
+	echo "Query file must contain more than one record when mode == 'multiple'"
 	exit 1
 fi
 """
+
 }
 }
 
+
+g_229_multipleFasta_g_221= g_229_multipleFasta_g_221.ifEmpty([""]) 
 
 
 process tblastn {
@@ -61,18 +110,20 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 }
 
 input:
- file query from g_206_multipleFasta_g_205
- val DB from g_15_commondb_path_g_205
+ file query from g_229_multipleFasta_g_221
+ val DB from g_15_commondb_path_g_221
+ val gencode from g_220_gencode_g_221
 
 output:
- file "report.blast"  into g_205_blast_output_g_126
- file "hits_{yes,no}.txt"  into g_205_outputFileTxt_g_126
+ file "report.blast"  into g_221_blast_output_g_126
+ file "hits_{yes,no}.txt"  into g_221_outputFileTxt_g_126
+
+when:
+query.toString() == "query_single.fasta"
 
 script:
 
 nseqs = params.tblastn.nseqs
-gencode = params.tblastn.gencode
-params.gencode = gencode
 
 """
 tblastn -db $DB -db_gencode $gencode -num_alignments $nseqs -query $query -out report.blast
@@ -92,8 +143,8 @@ fi
 process mview {
 
 input:
- file blast_report from g_205_blast_output_g_126
- file hits_file from g_205_outputFileTxt_g_126
+ file blast_report from g_221_blast_output_g_126
+ file hits_file from g_221_outputFileTxt_g_126
 
 output:
  set val("sequences"), file("sequences.fasta")  into g_126_genomes_g_49
@@ -121,7 +172,7 @@ input:
 
 output:
  set val("${name}_sel"), file("${name}_sel.fasta")  into g_49_genomes
- set val("${name}_sel"), file("${name}_sel.hash")  into g_49_hash_file_g_208
+ set val("${name}_sel"), file("${name}_sel.hash")  into g_49_hash_file_g_213
 
 """
 /export/src/dolphin/scripts/header_sel_mod3.pl $query_out_fasta $SPNAME 1>${name}_sel.fasta 2>${name}_sel.hash
@@ -132,41 +183,26 @@ output:
 
 process extract_sequences {
 
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /sequences.fasta$/) "tmp/$filename"
+}
+
 input:
- set val(name), file(hash) from g_49_hash_file_g_208
- val DB from g_15_commondb_path_g_208
+ set val(name), file(hash) from g_49_hash_file_g_213
+ val DB from g_15_commondb_path_g_213
 
 output:
- file "${name}.fasta"  into g_208_multipleFasta_g_207
+ file "sequences.fasta"  into g_213_multipleFasta_g_277
 
 """
-/export/src/dolphin/scripts/nuc_coding_mod.pl $hash $DB 1>${name}.fasta
+/export/src/dolphin/scripts/nuc_coding_mod.pl $hash $DB 1>sequences.fasta
 
 """
 }
 
-
-process aln_qc {
-
-input:
- val mode from g_193_mode_g_212
- file query from g_2_multipleFasta_g_212
-
-output:
- file "query_multiple.fasta"  into g_212_multipleFasta_g_207
-
-script:
-"""
-if [ `grep -c ">" $query` -gt 1 ]
-then 
-	mv $query query_multiple.fasta
-else
-	echo "Query file must contain more than one record when mode == 'multiple'"
-	exit 1
-fi
-"""
-
-}
+g_213_multipleFasta_g_277= g_213_multipleFasta_g_277.ifEmpty([""]) 
+g_239_multipleFasta_g_277= g_239_multipleFasta_g_277.ifEmpty([""]) 
 
 
 process drop_dublicates {
@@ -175,34 +211,45 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
 	if (filename =~ /seqs_unique.fasta$/) "sequences/$filename"
 	else if (filename =~ /report_(yes|no).txt$/) "report/$filename"
+	else if (filename =~ /condensation.log$/) "tmp/$filename"
 }
 
 input:
- file nucleotides from g_208_multipleFasta_g_207
- file nucleotides from g_212_multipleFasta_g_207
+ file nucleotides_single from g_213_multipleFasta_g_277
+ file nucleotides_multiple from g_239_multipleFasta_g_277
 
 output:
- file "seqs_unique.fasta"  into g_207_multipleFasta_g_209
- file "report_{yes,no}.txt" optional true  into g_207_outputFileTxt_g_209
+ file "seqs_unique.fasta"  into g_277_multipleFasta_g_222
+ file "report_{yes,no}.txt"  into g_277_outputFileTxt_g_222
+ file "condensation.log"  into g_277_logFile
 
-"""
-/export/src/dolphin/scripts/codon_alig_unique.pl $nucleotides 1>seqs_unique.fasta
-
-"""
+script:
+seqs = ""
+if (nucleotides_single.toString() == "sequences.fasta") {
+	seqs = nucleotides_single
+} else if (nucleotides_multiple.toString() == "sequences.fasta") {
+	seqs = nucleotides_multiple
 }
 
-g_207_outputFileTxt_g_209= g_207_outputFileTxt_g_209.ifEmpty([""]) 
+"""
+/export/src/dolphin/scripts/codon_alig_unique.pl $seqs 1>seqs_unique.fasta
+echo "$seqs\n$nucleotides_single\n$nucleotides_multiple" > condensation.log
+
+"""
+
+}
 
 
 process macse {
 
 input:
- file seqs from g_207_multipleFasta_g_209
- file report from g_207_outputFileTxt_g_209
+ file seqs from g_277_multipleFasta_g_222
+ file report from g_277_outputFileTxt_g_222
+ val gencode from g_220_gencode_g_222
 
 output:
- set val(name), file("${name}_mulal.fna")  into g_209_nucl_mulal_g_128
- set val(name), file("${name}_mulal.faa")  into g_209_aa_mulal
+ set val(name), file("${name}_mulal.fna")  into g_222_nucl_mulal_g_128
+ set val(name), file("${name}_mulal.faa")  into g_222_aa_mulal
 
 when:
 report.toString() == "report_yes.txt"
@@ -211,7 +258,7 @@ script:
 name = seqs.toString() - '.fasta'
 
 """
-java -jar /opt/macse_v2.05.jar -prog alignSequences -gc_def 2 -out_AA ${name}_mulal.faa -out_NT ${name}_mulal.fna -seq $seqs
+java -jar /opt/macse_v2.05.jar -prog alignSequences -gc_def $gencode -out_AA ${name}_mulal.faa -out_NT ${name}_mulal.fna -seq $seqs
 """
 }
 
@@ -224,7 +271,7 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 }
 
 input:
- set val(name), file(mulal) from g_209_nucl_mulal_g_128
+ set val(name), file(mulal) from g_222_nucl_mulal_g_128
 
 output:
  set val("alignment_checked"),file("alignment_checked.fasta")  into g_128_nucl_mulal_g_70, g_128_nucl_mulal_g_129, g_128_nucl_mulal_g_151
@@ -247,7 +294,7 @@ input:
  set val(name), file(mulal) from g_128_nucl_mulal_g_151
 
 output:
- set val("leaves_states"), file("leaves_states.state")  into g_151_state_g_177, g_151_state_g_178
+ set val("leaves_states"), file("leaves_states.state")  into g_151_state_g_292, g_151_state_g_293
 
 """
 python3 /export/src/mutspec-utils/scripts/alignment2iqtree_states.py $mulal leaves_states.state
@@ -266,7 +313,7 @@ input:
  set val(name), file(mulal) from g_128_nucl_mulal_g_129
 
 output:
- set val(name), file("${name}.phy")  into g_129_phylip_g_130, g_129_phylip_g_145, g_129_phylip_g_189, g_129_phylip_g_191
+ set val(name), file("${name}.phy")  into g_129_phylip_g_130, g_129_phylip_g_145, g_129_phylip_g_189, g_129_phylip_g_279
 
 """
 java -jar /opt/readseq.jar -a -f Phylip -o ${name}.phy $mulal
@@ -342,7 +389,7 @@ input:
  set val(name), file(tree) from g_145_tree_g_131
 
 output:
- set val("${name}_rooted"), file("*.nwk")  into g_131_tree_g_191
+ set val("${name}_rooted"), file("*.nwk")  into g_131_tree_g_279
 
 """
 nw_reroot -l $tree OUTGRP 1>${name}_rooted.nwk
@@ -361,13 +408,13 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 }
 
 input:
- set val(name), file(mulal) from g_129_phylip_g_191
- set val(namet), file(tree) from g_131_tree_g_191
+ set val(name), file(mulal) from g_129_phylip_g_279
+ set val(namet), file(tree) from g_131_tree_g_279
 
 output:
- set val("iqtree_anc_tree"), file("iqtree_anc_tree.nwk")  into g_191_tree_g_177
- set val("iqtree_anc"), file("iqtree_anc.state")  into g_191_state_g_177
- file "*.log"  into g_191_logFile
+ set val("iqtree_anc_tree"), file("iqtree_anc_tree.nwk")  into g_279_tree_g_292
+ set val("iqtree"), file("iqtree_anc.state")  into g_279_state_g_292
+ file "*.log"  into g_279_logFile
 
 errorStrategy 'retry'
 maxRetries 3
@@ -385,29 +432,40 @@ python3 /export/src/mutspec-utils/scripts/iqtree_states_add_part.py anc.state iq
 
 }
 
-ms_options = params.mutspec_iqtree.ms_options
+ms_options = params.mutations_iqtree.ms_options
+mnum192 = params.mutations_iqtree.mnum192
+proba_min = params.mutations_iqtree.proba_min
+outgrp = "OUTGRP"
 
 
-process mutspec_iqtree {
+process mutations_iqtree {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
 	if (filename =~ /.*.tsv$/) "mutspec_iqtree/$filename"
+	else if (filename =~ /expected_mutations.txt$/) "mutspec_iqtree/$filename"
 	else if (filename =~ /.*.log$/) "mutspec_iqtree/$filename"
+	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
 }
 
 input:
- set val(namet), file(tree) from g_191_tree_g_177
- set val(names1), file(states1) from g_191_state_g_177
- set val(names2), file(states2) from g_151_state_g_177
+ set val(namet), file(tree) from g_279_tree_g_292
+ set val(label), file(states1) from g_279_state_g_292
+ set val(names2), file(states2) from g_151_state_g_292
 
 output:
- file "*.tsv"  into g_177_outputFileTSV
- file "*.log"  into g_177_logFile
+ set "*.tsv"  into g_292_outputFileTSV
+ file "expected_mutations.txt"  into g_292_outputFileTxt
+ file "*.log"  into g_292_logFile
+ file "*.pdf"  into g_292_outputFilePdf
 
 """
 python3 /export/src/mutspec-utils/scripts/3.calculate_mutspec.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $ms_options --outdir mout
 mv mout/* .
+mv mutations.tsv observed_mutations_${label}.tsv
+mv expected_mutations.tsv expected_mutations.txt
+
+python3 /export/src/mutspec-utils/scripts/calculate_mutspec.py -b observed_mutations_${label}.tsv -e expected_mutations.txt -o . --outgrp $outgrp -m $mnum192 -l $label -p $proba_min -x pdf
 
 """
 }
@@ -466,8 +524,8 @@ input:
  set val(name), file(mulal) from g_129_phylip_g_189
 
 output:
- set val("RAxML_nodeLabelledRootedTree"),file("RAxML_nodeLabelledRootedTree.nwk")  into g_189_tree_g_178
- set val("RAxML_marginalAncestralProbabilities"), file("RAxML_marginalAncestralProbabilities.state")  into g_189_state_g_178
+ set val("RAxML_nodeLabelledRootedTree"),file("RAxML_nodeLabelledRootedTree.nwk")  into g_189_tree_g_293
+ set val("RAxML"), file("RAxML_marginalAncestralProbabilities.state")  into g_189_state_g_293
  file "RAxML_marginalAncestralStates.fasta"  into g_189_multipleFasta
  file "RAxML_anc_rec.log"  into g_189_logFile
 
@@ -484,29 +542,40 @@ python3 /export/src/mutspec-utils/scripts/rename_internal_nodes.py $tree RAxML_n
 """
 }
 
-ms_options = params.mutspec_raxml.ms_options
+ms_options = params.mutations_raxml.ms_options
+mnum192 = params.mutations_raxml.mnum192
+proba_min = params.mutations_raxml.proba_min
+outgrp = "OUTGRP"
 
 
-process mutspec_raxml {
+process mutations_raxml {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
 	if (filename =~ /.*.tsv$/) "mutspec_raxml/$filename"
+	else if (filename =~ /expected_mutations.txt$/) "tmp/$filename"
 	else if (filename =~ /.*.log$/) "mutspec_raxml/$filename"
+	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
 }
 
 input:
- set val(namet), file(tree) from g_189_tree_g_178
- set val(names1), file(states1) from g_189_state_g_178
- set val(names2), file(states2) from g_151_state_g_178
+ set val(namet), file(tree) from g_189_tree_g_293
+ set val(label), file(states1) from g_189_state_g_293
+ set val(names2), file(states2) from g_151_state_g_293
 
 output:
- file "*.tsv"  into g_178_outputFileTSV
- file "*.log"  into g_178_logFile
+ set "*.tsv"  into g_293_outputFileTSV
+ file "expected_mutations.txt"  into g_293_outputFileTxt
+ file "*.log"  into g_293_logFile
+ file "*.pdf"  into g_293_outputFilePdf
 
 """
 python3 /export/src/mutspec-utils/scripts/3.calculate_mutspec.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $ms_options --outdir mout
 mv mout/* .
+mv mutations.tsv observed_mutations_${label}.tsv
+mv expected_mutations.tsv expected_mutations.txt
+
+python3 /export/src/mutspec-utils/scripts/calculate_mutspec.py -b observed_mutations_${label}.tsv -e expected_mutations.txt -o . --outgrp $outgrp -m $mnum192 -l $label -p $proba_min -x pdf
 
 """
 }
