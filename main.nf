@@ -1,27 +1,36 @@
 $HOSTNAME = ""
 params.outdir = 'results'  
 
-THREADS = 4
+THREADS = 2
+//* params.mode =  "single"  //* @dropdown @options:"single, multiple" @description:"How to run pipeline, either on one record or on multiple records. WARNING: if you run mutational spectrum reconstruction on multiple records, you must be TODO"
+//* params.OUTGRP =  "OUTGRP"   //* @input
 
 //* autofill
 if ($HOSTNAME == "default"){
 	$SINGULARITY_IMAGE = "/export/src/image_pipeline-2.8.sif"
 	$SINGULARITY_OPTIONS = "--bind /export"
 }
+if (params.mode == "multiple"){
+	params.OUTGRP = "PASS THE OUTGROUP NAME"
+}
+else if (params.mode == "single"){
+	params.OUTGRP = "OUTGRP"
+}
+
 //* autofill
+
+
+
 
 if (!params.species_name){params.species_name = ""} 
 if (!params.sequence){params.sequence = ""} 
 if (!params.Mt_DB){params.Mt_DB = ""} 
-if (!params.mode){params.mode = ""} 
 if (!params.gencode){params.gencode = ""} 
-if (!params.outgroup_name){params.outgroup_name = ""} 
 
 Channel.value(params.species_name).set{g_1_species_name_g_49}
-g_2_multipleFasta_g_229 = file(params.sequence, type: 'any') 
-Channel.value(params.Mt_DB).into{g_15_commondb_path_g_213;g_15_commondb_path_g_221}
-Channel.value(params.mode).set{g_193_mode_g_229}
-Channel.value(params.gencode).into{g_220_gencode_g_221;g_220_gencode_g_222}
+g_2_multipleFasta_g_303 = file(params.sequence, type: 'any') 
+Channel.value(params.Mt_DB).into{g_15_commondb_path_g_213;g_15_commondb_path_g_308}
+Channel.value(params.gencode).into{g_220_gencode_g_222;g_220_gencode_g_308}
 
 
 process query_qc {
@@ -33,73 +42,44 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 }
 
 input:
- file query from g_2_multipleFasta_g_229
- val mode from g_193_mode_g_229
+ file query from g_2_multipleFasta_g_303
 
 output:
- file "query_single.fasta" optional true  into g_229_multipleFasta_g_221
- file "query_multiple.fasta" optional true  into g_229_multipleFasta_g_239
+ file "query_single.fasta" optional true  into g_303_multipleFasta_g_308
+ file "query_multiple.fasta" optional true  into g_303_multipleFasta_g_306
 
 """
-if [ $mode == "single" ]; then
-	if [ `grep -c ">" $query` -eq 1 ]; then 
-		mv $query query_single.fasta
+if [ $params.mode == "single" ]; then
+	if [ `grep -c ">" $query` -eq 1 ]; then
+		if [ $params.OUTGRP != "OUTGRP" ]; then
+			echo "If you run 'single' mode you mustn't change the OUTGRP argument and use default one"
+			exit 1
+		else
+			mv $query query_single.fasta
+		fi
 	else
 		echo "Query file must contain only one record when mode == 'single'"
 		exit 1
 	fi
-elif [ $mode == "multiple" ]; then
+elif [ $params.mode == "multiple" ]; then
 	if [ `grep -c ">" $query` -gt 1 ]; then 
-		mv $query query_multiple.fasta
+		if [ $params.OUTGRP == "" ]; then
+			echo "If you run 'multiple' mode you must pass the OUTGRP argument"
+			exit 1
+		else
+			mv $query query_multiple.fasta
+		fi
 	else
 		echo "Query file must contain more than one record when mode == 'multiple'"
 		exit 1
 	fi
 fi
 
-"""
-}
-
-g_229_multipleFasta_g_239= g_229_multipleFasta_g_239.ifEmpty([""]) 
-
-
-if (!(params.mode == "multiple")){
-g_229_multipleFasta_g_239.set{g_239_multipleFasta_g_277}
-} else {
-
-process qc_aln {
-
-publishDir params.outdir, overwrite: true, mode: 'copy',
-	saveAs: {filename ->
-	if (filename =~ /sequences.fasta$/) "tmp/$filename"
-}
-
-input:
- file query from g_229_multipleFasta_g_239
-
-output:
- file "sequences.fasta"  into g_239_multipleFasta_g_277
-
-when:
-params.mode == "multiple"
-
-script:
 
 """
-if [ `grep -c ">" $query` -gt 1 ]
-then 
-	mv $query sequences.fasta
-else
-	echo "Query file must contain more than one record when mode == 'multiple'"
-	exit 1
-fi
-"""
-
-}
 }
 
-
-g_229_multipleFasta_g_221= g_229_multipleFasta_g_221.ifEmpty([""]) 
+g_303_multipleFasta_g_308= g_303_multipleFasta_g_308.ifEmpty([""]) 
 
 
 process tblastn {
@@ -107,16 +87,18 @@ process tblastn {
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
 	if (filename =~ /report.blast$/) "report/$filename"
+	else if (filename =~ /char_numbers.log$/) "report/$filename"
 }
 
 input:
- file query from g_229_multipleFasta_g_221
- val DB from g_15_commondb_path_g_221
- val gencode from g_220_gencode_g_221
+ file query from g_303_multipleFasta_g_308
+ val DB from g_15_commondb_path_g_308
+ val gencode from g_220_gencode_g_308
 
 output:
- file "report.blast"  into g_221_blast_output_g_126
- file "hits_{yes,no}.txt"  into g_221_outputFileTxt_g_126
+ file "report.blast"  into g_308_blast_output_g_126
+ file "hits_{yes,no}.txt"  into g_308_outputFileTxt_g_126
+ file "char_numbers.log"  into g_308_logFile
 
 when:
 query.toString() == "query_single.fasta"
@@ -126,10 +108,16 @@ script:
 nseqs = params.tblastn.nseqs
 
 """
-tblastn -db $DB -db_gencode $gencode -num_alignments $nseqs -query $query -out report.blast
+grep -v  ">" $query | grep -o . | sort | uniq -c | sort -nr > char_numbers.log
+if [ `head -n 4 char_numbers.log | grep -Ec "[ACGTacgt]"` -lt 4 ] || [ `grep -Ec "[EFILPQU]" char_numbers.log` -ne 0 ]; then
+	tblastn -db $DB -db_gencode $gencode -num_alignments $nseqs -query $query -out report.blast
+else
+	echo "Query fasta must contain single amino acid sequence"
+	exit 1
+fi
 
-if [ `grep -c "No hits found" report.blast` -eq 0 ]
-then 
+
+if [ `grep -c "No hits found" report.blast` -eq 0 ]; then 
 	echo "Found hits in the database for given query" > hits_yes.txt
 else
 	echo "There are no hits in the database for given query" > hits_no.txt
@@ -143,8 +131,8 @@ fi
 process mview {
 
 input:
- file blast_report from g_221_blast_output_g_126
- file hits_file from g_221_outputFileTxt_g_126
+ file blast_report from g_308_blast_output_g_126
+ file hits_file from g_308_outputFileTxt_g_126
 
 output:
  set val("sequences"), file("sequences.fasta")  into g_126_genomes_g_49
@@ -201,8 +189,49 @@ output:
 """
 }
 
+g_303_multipleFasta_g_306= g_303_multipleFasta_g_306.ifEmpty([""]) 
+
+
+if (!(params.mode == "multiple")){
+g_303_multipleFasta_g_306.set{g_306_multipleFasta_g_277}
+g_306_logFile = Channel.empty()
+} else {
+
+process qc_aln {
+
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /sequences.fasta$/) "tmp/$filename"
+	else if (filename =~ /char_numbers.log$/) "report/$filename"
+}
+
+input:
+ file query from g_303_multipleFasta_g_306
+
+output:
+ file "sequences.fasta"  into g_306_multipleFasta_g_277
+ file "char_numbers.log" optional true  into g_306_logFile
+
+when:
+params.mode == "multiple"
+
+script:
+"""
+grep -v  ">" $query | grep -o . | sort | uniq -c | sort -nr > char_numbers.log
+if [ `head -n 5 char_numbers.log | grep -Ec "[ACGTacgt]"` -ge 3 ] && [ `grep -Ec "[EFILPQU]" char_numbers.log` -eq 0 ]; then
+	mv $query sequences.fasta
+else
+	echo "Query fasta must contain nucleotides when mode == 'multiple'"
+	exit 1
+fi
+"""
+
+}
+}
+
+
 g_213_multipleFasta_g_277= g_213_multipleFasta_g_277.ifEmpty([""]) 
-g_239_multipleFasta_g_277= g_239_multipleFasta_g_277.ifEmpty([""]) 
+g_306_multipleFasta_g_277= g_306_multipleFasta_g_277.ifEmpty([""]) 
 
 
 process drop_dublicates {
@@ -216,7 +245,7 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 
 input:
  file nucleotides_single from g_213_multipleFasta_g_277
- file nucleotides_multiple from g_239_multipleFasta_g_277
+ file nucleotides_multiple from g_306_multipleFasta_g_277
 
 output:
  file "seqs_unique.fasta"  into g_277_multipleFasta_g_222
@@ -294,7 +323,7 @@ input:
  set val(name), file(mulal) from g_128_nucl_mulal_g_151
 
 output:
- set val("leaves_states"), file("leaves_states.state")  into g_151_state_g_292, g_151_state_g_293
+ set val("leaves_states"), file("leaves_states.state")  into g_151_state_g_304, g_151_state_g_305
 
 """
 python3 /export/src/mutspec-utils/scripts/alignment2iqtree_states.py $mulal leaves_states.state
@@ -337,7 +366,7 @@ input:
  set val(name), file(mulal) from g_129_phylip_g_145
 
 output:
- set val("iqtree"), file("iqtree.nwk")  into g_145_tree_g_131, g_145_tree_g_132
+ set val("iqtree"), file("iqtree.nwk")  into g_145_tree_g_132, g_145_tree_g_302
  file "*.log"  into g_145_logFile
 
 when:
@@ -358,26 +387,6 @@ mv phylo.log iqtree.log
 }
 params.IQTREE_model = iqtree_model
 
-process extract_terminal_branch_lengths_iqtree {
-
-publishDir params.outdir, overwrite: true, mode: 'copy',
-	saveAs: {filename ->
-	if (filename =~ /${name}.branches$/) "IQTREE/$filename"
-}
-
-input:
- set val(name), file(tree) from g_145_tree_g_132
-
-output:
- set val(name), file("${name}.branches")  into g_132_branches
-
-"""
-nw_distance -m p -s l -n $tree | sort -grk 2 1>${name}.branches
-
-"""
-}
-
-
 process rooting_iqtree_tree {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
@@ -386,13 +395,13 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 }
 
 input:
- set val(name), file(tree) from g_145_tree_g_131
+ set val(name), file(tree) from g_145_tree_g_302
 
 output:
- set val("${name}_rooted"), file("*.nwk")  into g_131_tree_g_279
+ set val("${name}_rooted"), file("*.nwk")  into g_302_tree_g_279
 
 """
-nw_reroot -l $tree OUTGRP 1>${name}_rooted.nwk
+nw_reroot -l $tree $params.OUTGRP 1>${name}_rooted.nwk
 
 """
 }
@@ -409,11 +418,11 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 
 input:
  set val(name), file(mulal) from g_129_phylip_g_279
- set val(namet), file(tree) from g_131_tree_g_279
+ set val(namet), file(tree) from g_302_tree_g_279
 
 output:
- set val("iqtree_anc_tree"), file("iqtree_anc_tree.nwk")  into g_279_tree_g_292
- set val("iqtree"), file("iqtree_anc.state")  into g_279_state_g_292
+ set val("iqtree_anc_tree"), file("iqtree_anc_tree.nwk")  into g_279_tree_g_304
+ set val("iqtree"), file("iqtree_anc.state")  into g_279_state_g_304
  file "*.log"  into g_279_logFile
 
 errorStrategy 'retry'
@@ -435,37 +444,56 @@ python3 /export/src/mutspec-utils/scripts/iqtree_states_add_part.py anc.state iq
 ms_options = params.mutations_iqtree.ms_options
 mnum192 = params.mutations_iqtree.mnum192
 proba_min = params.mutations_iqtree.proba_min
-outgrp = "OUTGRP"
 
 
 process mutations_iqtree {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /.*.tsv$/) "mutspec_iqtree/$filename"
-	else if (filename =~ /expected_mutations.txt$/) "mutspec_iqtree/$filename"
-	else if (filename =~ /.*.log$/) "mutspec_iqtree/$filename"
+	if (filename =~ /.*.tsv$/) "mutspec_tables/$filename"
+	else if (filename =~ /.*.log$/) "mutspec_logs/$filename"
 	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
 }
 
 input:
- set val(namet), file(tree) from g_279_tree_g_292
- set val(label), file(states1) from g_279_state_g_292
- set val(names2), file(states2) from g_151_state_g_292
+ set val(namet), file(tree) from g_279_tree_g_304
+ set val(label), file(states1) from g_279_state_g_304
+ set val(names2), file(states2) from g_151_state_g_304
 
 output:
- set "*.tsv"  into g_292_outputFileTSV
- file "expected_mutations.txt"  into g_292_outputFileTxt
- file "*.log"  into g_292_logFile
- file "*.pdf"  into g_292_outputFilePdf
+ file "*.tsv"  into g_304_outputFileTSV
+ file "expected_mutations.txt"  into g_304_outputFileTxt
+ file "*.log"  into g_304_logFile
+ file "*.pdf"  into g_304_outputFilePdf
 
 """
-python3 /export/src/mutspec-utils/scripts/3.calculate_mutspec.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $ms_options --outdir mout
+python3 /export/src/mutspec-utils/scripts/3.collect_mutations.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $ms_options --outdir mout
 mv mout/* .
 mv mutations.tsv observed_mutations_${label}.tsv
 mv expected_mutations.tsv expected_mutations.txt
+mv run.log ${label}_run.log
 
-python3 /export/src/mutspec-utils/scripts/calculate_mutspec.py -b observed_mutations_${label}.tsv -e expected_mutations.txt -o . --outgrp $outgrp -m $mnum192 -l $label -p $proba_min -x pdf
+python3 /export/src/mutspec-utils/scripts/calculate_mutspec.py -b observed_mutations_${label}.tsv -e expected_mutations.txt -o . --outgrp $params.OUTGRP -m $mnum192 -l $label -p $proba_min -x pdf
+
+"""
+}
+
+
+process extract_terminal_branch_lengths_iqtree {
+
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /${name}.branches$/) "IQTREE/$filename"
+}
+
+input:
+ set val(name), file(tree) from g_145_tree_g_132
+
+output:
+ set val(name), file("${name}.branches")  into g_132_branches
+
+"""
+nw_distance -m p -s l -n $tree | sort -grk 2 1>${name}.branches
 
 """
 }
@@ -481,7 +509,7 @@ input:
  set val(name), file(mulal) from g_129_phylip_g_130
 
 output:
- set val("raxml"), file("raxml.nwk")  into g_130_tree_g_109, g_130_tree_g_111
+ set val("raxml"), file("raxml.nwk")  into g_130_tree_g_109, g_130_tree_g_301
 
 when:
 run_RAXML == "true"
@@ -498,13 +526,13 @@ params.RAxML_model = raxml_model
 process rooting_raxml_tree {
 
 input:
- set val(name), file(tree) from g_130_tree_g_111
+ set val(name), file(tree) from g_130_tree_g_301
 
 output:
- set val("${name}_rooted"), file("*.nwk")  into g_111_tree_g_189
+ set val("${name}_rooted"), file("*.nwk")  into g_301_tree_g_189
 
 """
-nw_reroot -l $tree OUTGRP 1>${name}_rooted.nwk
+nw_reroot -l $tree $params.OUTGRP 1>${name}_rooted.nwk
 
 """
 }
@@ -520,12 +548,12 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 }
 
 input:
- set val(namet), file(tree) from g_111_tree_g_189
+ set val(namet), file(tree) from g_301_tree_g_189
  set val(name), file(mulal) from g_129_phylip_g_189
 
 output:
- set val("RAxML_nodeLabelledRootedTree"),file("RAxML_nodeLabelledRootedTree.nwk")  into g_189_tree_g_293
- set val("RAxML"), file("RAxML_marginalAncestralProbabilities.state")  into g_189_state_g_293
+ set val("RAxML_nodeLabelledRootedTree"),file("RAxML_nodeLabelledRootedTree.nwk")  into g_189_tree_g_305
+ set val("RAxML"), file("RAxML_marginalAncestralProbabilities.state")  into g_189_state_g_305
  file "RAxML_marginalAncestralStates.fasta"  into g_189_multipleFasta
  file "RAxML_anc_rec.log"  into g_189_logFile
 
@@ -545,37 +573,37 @@ python3 /export/src/mutspec-utils/scripts/rename_internal_nodes.py $tree RAxML_n
 ms_options = params.mutations_raxml.ms_options
 mnum192 = params.mutations_raxml.mnum192
 proba_min = params.mutations_raxml.proba_min
-outgrp = "OUTGRP"
 
 
 process mutations_raxml {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /.*.tsv$/) "mutspec_raxml/$filename"
+	if (filename =~ /.*.tsv$/) "mutspec_tables/$filename"
 	else if (filename =~ /expected_mutations.txt$/) "tmp/$filename"
-	else if (filename =~ /.*.log$/) "mutspec_raxml/$filename"
+	else if (filename =~ /.*.log$/) "mutspec_logs/$filename"
 	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
 }
 
 input:
- set val(namet), file(tree) from g_189_tree_g_293
- set val(label), file(states1) from g_189_state_g_293
- set val(names2), file(states2) from g_151_state_g_293
+ set val(namet), file(tree) from g_189_tree_g_305
+ set val(label), file(states1) from g_189_state_g_305
+ set val(names2), file(states2) from g_151_state_g_305
 
 output:
- set "*.tsv"  into g_293_outputFileTSV
- file "expected_mutations.txt"  into g_293_outputFileTxt
- file "*.log"  into g_293_logFile
- file "*.pdf"  into g_293_outputFilePdf
+ file "*.tsv"  into g_305_outputFileTSV
+ file "expected_mutations.txt"  into g_305_outputFileTxt
+ file "*.log"  into g_305_logFile
+ file "*.pdf"  into g_305_outputFilePdf
 
 """
-python3 /export/src/mutspec-utils/scripts/3.calculate_mutspec.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $ms_options --outdir mout
+python3 /export/src/mutspec-utils/scripts/3.collect_mutations.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $ms_options --outdir mout
 mv mout/* .
 mv mutations.tsv observed_mutations_${label}.tsv
 mv expected_mutations.tsv expected_mutations.txt
+mv run.log ${label}_run.log
 
-python3 /export/src/mutspec-utils/scripts/calculate_mutspec.py -b observed_mutations_${label}.tsv -e expected_mutations.txt -o . --outgrp $outgrp -m $mnum192 -l $label -p $proba_min -x pdf
+python3 /export/src/mutspec-utils/scripts/calculate_mutspec.py -b observed_mutations_${label}.tsv -e expected_mutations.txt -o . --outgrp $params.OUTGRP -m $mnum192 -l $label -p $proba_min -x pdf
 
 """
 }
