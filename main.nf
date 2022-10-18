@@ -63,8 +63,8 @@ if [ $params.mode == "single" ]; then
 	fi
 elif [ $params.mode == "multiple" ]; then
 	if [ `grep -c ">" $query` -gt 1 ]; then 
-		if [ $params.OUTGRP == "" ]; then
-			echo "If you run 'multiple' mode you must pass the OUTGRP argument"
+		if [ $params.OUTGRP == "PASS THE OUTGROUP NAME" ] || [ `grep -c $params.OUTGRP $query` -eq 1 ]; then
+			echo "If you run 'multiple' mode you must pass the OUTGRP argument and it must be presented in the fasta file"
 			exit 1
 		else
 			mv $query query_multiple.fasta
@@ -201,8 +201,7 @@ process qc_aln {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /sequences.fasta$/) "tmp/$filename"
-	else if (filename =~ /char_numbers.log$/) "report/$filename"
+	if (filename =~ /char_numbers.log$/) "report/$filename"
 }
 
 input:
@@ -323,7 +322,7 @@ input:
  set val(name), file(mulal) from g_128_nucl_mulal_g_151
 
 output:
- set val("leaves_states"), file("leaves_states.state")  into g_151_state_g_304, g_151_state_g_305
+ set val("leaves_states"), file("leaves_states.state")  into g_151_state_g_310, g_151_state_g_311
 
 """
 python3 /export/src/mutspec-utils/scripts/alignment2iqtree_states.py $mulal leaves_states.state
@@ -421,8 +420,8 @@ input:
  set val(namet), file(tree) from g_302_tree_g_279
 
 output:
- set val("iqtree_anc_tree"), file("iqtree_anc_tree.nwk")  into g_279_tree_g_304
- set val("iqtree"), file("iqtree_anc.state")  into g_279_state_g_304
+ set val("iqtree_anc_tree"), file("iqtree_anc_tree.nwk")  into g_279_tree_g_310
+ set val("iqtree"), file("iqtree_anc.state")  into g_279_state_g_310
  file "*.log"  into g_279_logFile
 
 errorStrategy 'retry'
@@ -441,10 +440,16 @@ python3 /export/src/mutspec-utils/scripts/iqtree_states_add_part.py anc.state iq
 
 }
 
-ms_options = params.mutations_iqtree.ms_options
+syn = params.mutations_iqtree.syn
+syn4f = params.mutations_iqtree.syn4f
+use_probabilities = params.mutations_iqtree.use_probabilities
 mnum192 = params.mutations_iqtree.mnum192
 proba_min = params.mutations_iqtree.proba_min
+//* @style @multicolumn:{syn, syn4f, use_probabilities}, {mnum192, proba_min}
 
+syn = syn == "true" ? "--syn" : ""
+syn4f = syn4f == "true" ? "--syn4f" : ""
+proba = use_probabilities == "true" ? "--proba" : ""
 
 process mutations_iqtree {
 
@@ -456,18 +461,17 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 }
 
 input:
- set val(namet), file(tree) from g_279_tree_g_304
- set val(label), file(states1) from g_279_state_g_304
- set val(names2), file(states2) from g_151_state_g_304
+ set val(namet), file(tree) from g_279_tree_g_310
+ set val(label), file(states1) from g_279_state_g_310
+ set val(names2), file(states2) from g_151_state_g_310
 
 output:
- file "*.tsv"  into g_304_outputFileTSV
- file "expected_mutations.txt"  into g_304_outputFileTxt
- file "*.log"  into g_304_logFile
- file "*.pdf"  into g_304_outputFilePdf
+ file "*.tsv"  into g_310_outputFileTSV
+ file "*.log"  into g_310_logFile
+ file "*.pdf"  into g_310_outputFilePdf
 
 """
-python3 /export/src/mutspec-utils/scripts/3.collect_mutations.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $ms_options --outdir mout
+python3 /export/src/mutspec-utils/scripts/3.collect_mutations.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $syn $syn4f $proba --no-mutspec --outdir mout
 mv mout/* .
 mv mutations.tsv observed_mutations_${label}.tsv
 mv expected_mutations.tsv expected_mutations.txt
@@ -552,8 +556,8 @@ input:
  set val(name), file(mulal) from g_129_phylip_g_189
 
 output:
- set val("RAxML_nodeLabelledRootedTree"),file("RAxML_nodeLabelledRootedTree.nwk")  into g_189_tree_g_305
- set val("RAxML"), file("RAxML_marginalAncestralProbabilities.state")  into g_189_state_g_305
+ set val("RAxML_nodeLabelledRootedTree"),file("RAxML_nodeLabelledRootedTree.nwk")  into g_189_tree_g_311
+ set val("RAxML"), file("RAxML_marginalAncestralProbabilities.state")  into g_189_state_g_311
  file "RAxML_marginalAncestralStates.fasta"  into g_189_multipleFasta
  file "RAxML_anc_rec.log"  into g_189_logFile
 
@@ -570,34 +574,38 @@ python3 /export/src/mutspec-utils/scripts/rename_internal_nodes.py $tree RAxML_n
 """
 }
 
-ms_options = params.mutations_raxml.ms_options
+syn = params.mutations_raxml.syn
+syn4f = params.mutations_raxml.syn4f
+use_probabilities = params.mutations_raxml.use_probabilities
 mnum192 = params.mutations_raxml.mnum192
 proba_min = params.mutations_raxml.proba_min
+//* @style @multicolumn:{syn, syn4f, use_probabilities}, {mnum192, proba_min}
 
+syn = syn == "true" ? "--syn" : ""
+syn4f = syn4f == "true" ? "--syn4f" : ""
+proba = use_probabilities == "true" ? "--proba" : ""
 
 process mutations_raxml {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
 	if (filename =~ /.*.tsv$/) "mutspec_tables/$filename"
-	else if (filename =~ /expected_mutations.txt$/) "tmp/$filename"
 	else if (filename =~ /.*.log$/) "mutspec_logs/$filename"
 	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
 }
 
 input:
- set val(namet), file(tree) from g_189_tree_g_305
- set val(label), file(states1) from g_189_state_g_305
- set val(names2), file(states2) from g_151_state_g_305
+ set val(namet), file(tree) from g_189_tree_g_311
+ set val(label), file(states1) from g_189_state_g_311
+ set val(names2), file(states2) from g_151_state_g_311
 
 output:
- file "*.tsv"  into g_305_outputFileTSV
- file "expected_mutations.txt"  into g_305_outputFileTxt
- file "*.log"  into g_305_logFile
- file "*.pdf"  into g_305_outputFilePdf
+ file "*.tsv"  into g_311_outputFileTSV
+ file "*.log"  into g_311_logFile
+ file "*.pdf"  into g_311_outputFilePdf
 
 """
-python3 /export/src/mutspec-utils/scripts/3.collect_mutations.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $ms_options --outdir mout
+python3 /export/src/mutspec-utils/scripts/3.collect_mutations.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $syn $syn4f $proba --no-mutspec --outdir mout
 mv mout/* .
 mv mutations.tsv observed_mutations_${label}.tsv
 mv expected_mutations.tsv expected_mutations.txt
