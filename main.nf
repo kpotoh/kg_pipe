@@ -1,15 +1,23 @@
 $HOSTNAME = ""
 params.outdir = 'results'  
 
-THREADS = 2
+THREADS = 1
 //* params.mode =  "single"  //* @dropdown @options:"single, multiple" @description:"How to run pipeline, either on one record or on multiple records. WARNING: if you run mutational spectrum reconstruction on multiple records, you must be TODO"
 //* params.OUTGRP =  "OUTGRP"   //* @input
 
 //* autofill
 if ($HOSTNAME == "default"){
-	$SINGULARITY_IMAGE = "/export/src/image_pipeline-2.8.sif"
+	$SINGULARITY_IMAGE = "/export/src/image_pipeline-2.9.sif"
 	$SINGULARITY_OPTIONS = "--bind /export"
+	params.outdir='/export/kg_pipe/testN'
 }
+
+if ($HOSTNAME == "85.175.149.198"){
+	$SINGULARITY_IMAGE = "/home/dolphin/image_pipeline-2.9.sif"
+	$SINGULARITY_OPTIONS = "--bind /home/dolphin/export"
+	params.outdir='/home/dolphin/runs/NAME'
+}
+
 if (params.mode == "multiple"){
 	params.OUTGRP = "PASS THE OUTGROUP NAME"
 }
@@ -58,19 +66,19 @@ if [ $params.mode == "single" ]; then
 			mv $query query_single.fasta
 		fi
 	else
-		echo "Query file must contain only one record when mode == 'single'"
+		echo "Query fasta must contain only one record when mode == 'single'"
 		exit 1
 	fi
 elif [ $params.mode == "multiple" ]; then
 	if [ `grep -c ">" $query` -gt 1 ]; then 
-		if [ $params.OUTGRP == "PASS THE OUTGROUP NAME" ] || [ `grep -c $params.OUTGRP $query` -eq 1 ]; then
+		if [ $params.OUTGRP == "PASS THE OUTGROUP NAME" ] || [ `grep -c $params.OUTGRP $query` -eq 0 ]; then
 			echo "If you run 'multiple' mode you must pass the OUTGRP argument and it must be presented in the fasta file"
 			exit 1
 		else
 			mv $query query_multiple.fasta
 		fi
 	else
-		echo "Query file must contain more than one record when mode == 'multiple'"
+		echo "Query fasta must contain more than one record when mode == 'multiple'"
 		exit 1
 	fi
 fi
@@ -302,7 +310,7 @@ input:
  set val(name), file(mulal) from g_222_nucl_mulal_g_128
 
 output:
- set val("alignment_checked"),file("alignment_checked.fasta")  into g_128_nucl_mulal_g_70, g_128_nucl_mulal_g_129, g_128_nucl_mulal_g_151
+ set val("alignment_checked"),file("alignment_checked.fasta")  into g_128_nucl_mulal_g_70, g_128_nucl_mulal_g_129, g_128_nucl_mulal_g_151, g_128_nucl_mulal_g_357, g_128_nucl_mulal_g_358
 
 """
 /export/src/dolphin/scripts/macse2.pl $mulal alignment_checked.fasta
@@ -322,10 +330,10 @@ input:
  set val(name), file(mulal) from g_128_nucl_mulal_g_151
 
 output:
- set val("leaves_states"), file("leaves_states.state")  into g_151_state_g_310, g_151_state_g_311
+ set val("leaves_states"), file("leaves_states.state")  into g_151_state_g_333, g_151_state_g_334
 
 """
-python3 /export/src/mutspec-utils/scripts/alignment2iqtree_states.py $mulal leaves_states.state
+alignment2iqtree_states.py $mulal leaves_states.state
 """
 }
 
@@ -334,14 +342,15 @@ process convert_alignment_to_phylip {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /${name}.phy$/) "tmp/$filename"
+	if (filename =~ /${name}.phy$/) "IQTREE/$filename"
+	else if (filename =~ /${name}.phy$/) "RAxML/$filename"
 }
 
 input:
  set val(name), file(mulal) from g_128_nucl_mulal_g_129
 
 output:
- set val(name), file("${name}.phy")  into g_129_phylip_g_130, g_129_phylip_g_145, g_129_phylip_g_189, g_129_phylip_g_279
+ set val(name), file("${name}.phy")  into g_129_phylip_g_130, g_129_phylip_g_145, g_129_phylip_g_326, g_129_phylip_g_327
 
 """
 java -jar /opt/readseq.jar -a -f Phylip -o ${name}.phy $mulal
@@ -358,14 +367,15 @@ process IQTREE_build_tree {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /.*.log$/) "IQTREE/$filename"
+	if (filename =~ /iqtree.nwk$/) "tmp/$filename"
+	else if (filename =~ /.*.log$/) "report/$filename"
 }
 
 input:
  set val(name), file(mulal) from g_129_phylip_g_145
 
 output:
- set val("iqtree"), file("iqtree.nwk")  into g_145_tree_g_132, g_145_tree_g_302
+ set val("iqtree"), file("iqtree.nwk")  into g_145_tree_g_315
  file "*.log"  into g_145_logFile
 
 when:
@@ -385,6 +395,59 @@ mv phylo.log iqtree.log
 
 }
 params.IQTREE_model = iqtree_model
+quantile = params.shrink_iqtree.quantile
+
+
+process shrink_iqtree {
+
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /${name}_shrinked.nwk$/) "tmp/$filename"
+	else if (filename =~ /.*.log$/) "IQTREE/$filename"
+}
+
+input:
+ set val(name), file(tree) from g_145_tree_g_315
+
+output:
+ set val("${name}_shrinked"), file("${name}_shrinked.nwk")  into g_315_tree_g_302, g_315_tree_g_132
+ file "*.log"  into g_315_logFile
+
+"""
+run_treeshrink.py -t $tree -O treeshrink -o . -q $quantile -x $params.OUTGRP
+mv treeshrink.nwk ${name}_shrinked.nwk
+mv treeshrink_summary.txt ${name}_treeshrink.log
+mv treeshrink.txt ${name}_pruned_nodes.log
+
+"""
+}
+
+
+process extract_terminal_branch_lengths_iqtree {
+
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /${name}.branches$/) "IQTREE/$filename"
+}
+
+input:
+ set val(name), file(tree) from g_315_tree_g_132
+
+output:
+ set val(name), file("${name}.branches")  into g_132_branches
+
+"""
+nw_distance -m p -s l -n $tree | sort -grk 2 1> ${name}.branches
+
+if [ `head -n 1 ${name}.branches | grep -c OUTGRP` -ne 1 ]; then
+	echo "Something went wrong: outgroup is not furthest leaf in the tree"
+	cat "${name}.branches"
+	exit 1
+fi
+
+"""
+}
+
 
 process rooting_iqtree_tree {
 
@@ -394,10 +457,10 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 }
 
 input:
- set val(name), file(tree) from g_145_tree_g_302
+ set val(name), file(tree) from g_315_tree_g_302
 
 output:
- set val("${name}_rooted"), file("*.nwk")  into g_302_tree_g_279
+ set val("${name}_rooted"), file("*.nwk")  into g_302_tree_g_326
 
 """
 nw_reroot -l $tree $params.OUTGRP 1>${name}_rooted.nwk
@@ -412,17 +475,17 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
 	if (filename =~ /iqtree_anc_tree.nwk$/) "IQTREE/$filename"
 	else if (filename =~ /iqtree_anc.state$/) "IQTREE/$filename"
-	else if (filename =~ /.*.log$/) "IQTREE/$filename"
+	else if (filename =~ /.*.log$/) "report/$filename"
 }
 
 input:
- set val(name), file(mulal) from g_129_phylip_g_279
- set val(namet), file(tree) from g_302_tree_g_279
+ set val(name), file(mulal) from g_129_phylip_g_326
+ set val(namet), file(tree) from g_302_tree_g_326
 
 output:
- set val("iqtree_anc_tree"), file("iqtree_anc_tree.nwk")  into g_279_tree_g_310
- set val("iqtree"), file("iqtree_anc.state")  into g_279_state_g_310
- file "*.log"  into g_279_logFile
+ set val("iqtree"), file("iqtree_anc_tree.nwk")  into g_326_tree_g_333, g_326_tree_g_357
+ set val("iqtree"), file("iqtree_anc.state")  into g_326_state_g_333
+ file "*.log"  into g_326_logFile
 
 errorStrategy 'retry'
 maxRetries 3
@@ -433,21 +496,19 @@ iqtree2 -s $mulal -m $params.IQTREE_model -asr -nt $THREADS --prefix anc
 mv anc.iqtree iqtree_anc_report.log
 # mv anc.state iqtree_anc.state
 mv anc.log iqtree_anc.log
-mv anc.treefile iqtree_anc_tree.nwk
+nw_reroot anc.treefile OUTGRP | sed 's/;/ROOT;/' > iqtree_anc_tree.nwk
 
 python3 /export/src/mutspec-utils/scripts/iqtree_states_add_part.py anc.state iqtree_anc.state
 """
 
 }
 
-syn = params.mutations_iqtree.syn
 syn4f = params.mutations_iqtree.syn4f
 use_probabilities = params.mutations_iqtree.use_probabilities
 mnum192 = params.mutations_iqtree.mnum192
 proba_min = params.mutations_iqtree.proba_min
-//* @style @multicolumn:{syn, syn4f, use_probabilities}, {mnum192, proba_min}
+//* @style @multicolumn:{syn4f, use_probabilities}, {mnum192, proba_min}
 
-syn = syn == "true" ? "--syn" : ""
 syn4f = syn4f == "true" ? "--syn4f" : ""
 proba = use_probabilities == "true" ? "--proba" : ""
 
@@ -456,48 +517,99 @@ process mutations_iqtree {
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
 	if (filename =~ /.*.tsv$/) "mutspec_tables/$filename"
-	else if (filename =~ /.*.log$/) "mutspec_logs/$filename"
+	else if (filename =~ /.*.log$/) "report/$filename"
 	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
+	else if (filename =~ /ms12syn_${label}.txt$/) "tmp/$filename"
 }
 
 input:
- set val(namet), file(tree) from g_279_tree_g_310
- set val(label), file(states1) from g_279_state_g_310
- set val(names2), file(states2) from g_151_state_g_310
+ set val(namet), file(tree) from g_326_tree_g_333
+ set val(label), file(states1) from g_326_state_g_333
+ set val(names2), file(states2) from g_151_state_g_333
 
 output:
- file "*.tsv"  into g_310_outputFileTSV
- file "*.log"  into g_310_logFile
- file "*.pdf"  into g_310_outputFilePdf
+ file "*.tsv"  into g_333_outputFileTSV
+ file "*.log"  into g_333_logFile
+ file "*.pdf"  into g_333_outputFilePdf
+ file "ms12syn_${label}.txt"  into g_333_outputFileTxt_g_357
 
 """
-python3 /export/src/mutspec-utils/scripts/3.collect_mutations.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $syn $syn4f $proba --no-mutspec --outdir mout
+3.collect_mutations.py --tree $tree --states $states1 --states $states2 \
+	--gencode $params.gencode --syn $syn4f $proba --no-mutspec --outdir mout
+
 mv mout/* .
 mv mutations.tsv observed_mutations_${label}.tsv
 mv expected_mutations.tsv expected_mutations.txt
-mv run.log ${label}_run.log
+mv run.log ${label}_mut_extraction.log
 
-python3 /export/src/mutspec-utils/scripts/calculate_mutspec.py -b observed_mutations_${label}.tsv -e expected_mutations.txt -o . --outgrp $params.OUTGRP -m $mnum192 -l $label -p $proba_min -x pdf
+calculate_mutspec.py -b observed_mutations_${label}.tsv -e expected_mutations.txt -o . \
+	--exclude ${params.OUTGRP},ROOT --mnum192 $mnum192 -l $label $proba --proba_min $proba_min --syn $syn4f --plot -x pdf
+
+cp ms12syn_${label}.tsv ms12syn_${label}.txt
 
 """
 }
 
+replics = params.pyvolve_iqtree.replics
+scale_tree = params.pyvolve_iqtree.scale_tree
+syn4f = params.pyvolve_iqtree.syn4f
+mnum192 = params.pyvolve_iqtree.mnum192
+//* @style @multicolumn:{replics, scale_tree}, {syn4f, mnum192}
 
-process extract_terminal_branch_lengths_iqtree {
+syn4f = syn4f == "true" ? "--syn4f" : ""
+
+
+process pyvolve_iqtree {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /${name}.branches$/) "IQTREE/$filename"
+	if (filename =~ /.*.tsv$/) "mutspec_tables/$filename"
+	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
+	else if (filename =~ /.*.log$/) "report/$filename"
 }
 
 input:
- set val(name), file(tree) from g_145_tree_g_132
+ file spectra from g_333_outputFileTxt_g_357
+ set val(label), file(tree) from g_326_tree_g_357
+ set val(name), file(mulal) from g_128_nucl_mulal_g_357
 
 output:
- set val(name), file("${name}.branches")  into g_132_branches
+ file "*.tsv"  into g_357_outputFileTSV
+ file "*.pdf"  into g_357_outputFilePdf
+ file "*.log"  into g_357_logFile
 
 """
-nw_distance -m p -s l -n $tree | sort -grk 2 1>${name}.branches
+nw_prune $tree $params.OUTGRP > ${tree}.ingroup
+echo "Tree outgroup pruned"
+
+nw_labels -L ${tree}.ingroup | grep -v ROOT | xargs -I{} echo -e "{}\tNode{}" > map.txt
+if [ `grep -c NodeNode map.txt` -eq 0 ]; then
+	nw_rename ${tree}.ingroup map.txt > ${tree}.tmp
+	cat ${tree}.tmp > ${tree}.ingroup
+	echo "Internal nodes renamed"
+fi
+
+pyvolve_process.py -a $mulal -t ${tree}.ingroup -s $spectra -o seqfile.fasta -r $replics -c $params.gencode -l $scale_tree --write_anc
+echo "Mutation samples generated"
+
+for fasta_file in seqfile_sample-*.fasta
+do
+	echo "Processing \$fasta_file"
+	alignment2iqtree_states.py \$fasta_file  \${fasta_file}.state
+	3.collect_mutations.py --tree ${tree}.ingroup --states  \${fasta_file}.state --gencode $params.gencode --syn $syn4f --no-mutspec --outdir mout --force
+	cat mout/run.log >> pyvolve_${label}.log
+	echo -e "\n\n">> pyvolve_${label}.log
+	cat mout/mutations.tsv >  \${fasta_file}.mutations
+done
+echo "Mutations extraction done"
+
+concat_mutations.py seqfile_sample-*.fasta.mutations mutations_${label}_pyvolve.tsv
+echo "Mutations concatenation done"
+cat mutations_${label}_pyvolve.tsv
+
+calculate_mutspec.py -b mutations_${label}_pyvolve.tsv -e mout/expected_mutations.tsv -o . \
+	-l ${label}_pyvolve --exclude ${params.OUTGRP},ROOT --syn $syn4f --mnum192 $mnum192 --plot -x pdf
+echo "Mutational spectrum calculated"
 
 """
 }
@@ -509,11 +621,16 @@ raxml_model = params.RAxML_build_tree.raxml_model
 
 process RAxML_build_tree {
 
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /raxml.nwk$/) "tmp/$filename"
+}
+
 input:
  set val(name), file(mulal) from g_129_phylip_g_130
 
 output:
- set val("raxml"), file("raxml.nwk")  into g_130_tree_g_109, g_130_tree_g_301
+ set val("raxml"), file("raxml.nwk")  into g_130_tree_g_317
 
 when:
 run_RAXML == "true"
@@ -526,14 +643,72 @@ mv RAxML_bestTree.Rax_tree raxml.nwk
 
 }
 params.RAxML_model = raxml_model
+quantile = params.shrink_raxml.quantile
+
+
+process shrink_raxml {
+
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /${name}_shrinked.nwk$/) "tmp/$filename"
+	else if (filename =~ /.*.log$/) "RAxML/$filename"
+}
+
+input:
+ set val(name), file(tree) from g_130_tree_g_317
+
+output:
+ set val("${name}_shrinked"), file("${name}_shrinked.nwk")  into g_317_tree_g_301, g_317_tree_g_109
+ file "*.log"  into g_317_logFile
+
+"""
+run_treeshrink.py -t $tree -O treeshrink -o . -q $quantile -x $params.OUTGRP
+mv treeshrink.nwk ${name}_shrinked.nwk
+mv treeshrink_summary.txt ${name}_treeshrink.log
+mv treeshrink.txt ${name}_pruned_nodes.log
+
+"""
+}
+
+
+process extract_terminal_branch_lengths_raxml {
+
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /${name}.branches$/) "RAxML/$filename"
+}
+
+input:
+ set val(name), file(tree) from g_317_tree_g_109
+
+output:
+ set val(name), file("${name}.branches")  into g_109_branches
+
+"""
+nw_distance -m p -s l -n $tree | sort -grk 2 1> ${name}.branches
+
+if [ `head -n 1 ${name}.branches | grep -c OUTGRP` -ne 1 ]; then
+	echo "Something went wrong: outgroup is not furthest leaf in the tree"
+	cat "${name}.branches"
+	exit 1
+fi
+
+"""
+}
+
 
 process rooting_raxml_tree {
 
+publishDir params.outdir, overwrite: true, mode: 'copy',
+	saveAs: {filename ->
+	if (filename =~ /.*.nwk$/) "tmp/$filename"
+}
+
 input:
- set val(name), file(tree) from g_130_tree_g_301
+ set val(name), file(tree) from g_317_tree_g_301
 
 output:
- set val("${name}_rooted"), file("*.nwk")  into g_301_tree_g_189
+ set val("${name}_rooted"), file("*.nwk")  into g_301_tree_g_327
 
 """
 nw_reroot -l $tree $params.OUTGRP 1>${name}_rooted.nwk
@@ -548,40 +723,38 @@ publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
 	if (filename =~ /RAxML_nodeLabelledRootedTree.nwk$/) "RAxML/$filename"
 	else if (filename =~ /RAxML_marginalAncestralProbabilities.state$/) "RAxML/$filename"
-	else if (filename =~ /RAxML_anc_rec.log$/) "RAxML/$filename"
+	else if (filename =~ /RAxML_anc_rec.log$/) "report/$filename"
 }
 
 input:
- set val(namet), file(tree) from g_301_tree_g_189
- set val(name), file(mulal) from g_129_phylip_g_189
+ set val(namet), file(tree) from g_301_tree_g_327
+ set val(name), file(mulal) from g_129_phylip_g_327
 
 output:
- set val("RAxML_nodeLabelledRootedTree"),file("RAxML_nodeLabelledRootedTree.nwk")  into g_189_tree_g_311
- set val("RAxML"), file("RAxML_marginalAncestralProbabilities.state")  into g_189_state_g_311
- file "RAxML_marginalAncestralStates.fasta"  into g_189_multipleFasta
- file "RAxML_anc_rec.log"  into g_189_logFile
+ set val("raxml"),file("RAxML_nodeLabelledRootedTree.nwk")  into g_327_tree_g_334, g_327_tree_g_358
+ set val("raxml"), file("RAxML_marginalAncestralProbabilities.state")  into g_327_state_g_334
+ file "RAxML_marginalAncestralStates.fasta"  into g_327_multipleFasta
+ file "RAxML_anc_rec.log"  into g_327_logFile
 
 """
-/opt/standard-RAxML-8.2.12/raxmlHPC-PTHREADS-SSE3 -T $THREADS -f A -m $params.RAxML_model -s $mulal -t $tree -n ANCESTORS
+raxmlHPC-PTHREADS-SSE3 -T $THREADS -f A -m $params.RAxML_model -s $mulal -t $tree -n ANCESTORS
 mv RAxML_info.ANCESTORS RAxML_anc_rec.log
 mv RAxML_marginalAncestralStates.ANCESTORS RAxML_marginalAncestralStates.fasta
 # mv RAxML_marginalAncestralProbabilities.ANCESTORS RAxML_marginalAncestralProbabilities.txt
 # mv RAxML_nodeLabelledRootedTree.ANCESTORS RAxML_nodeLabelledRootedTree.nwk
 
-python3 /export/src/mutspec-utils/scripts/raxml_states2iqtree_states.py RAxML_marginalAncestralProbabilities.ANCESTORS RAxML_marginalAncestralProbabilities.state
-python3 /export/src/mutspec-utils/scripts/rename_internal_nodes.py $tree RAxML_nodeLabelledRootedTree.ANCESTORS RAxML_nodeLabelledRootedTree.nwk
+raxml_states2iqtree_states.py RAxML_marginalAncestralProbabilities.ANCESTORS RAxML_marginalAncestralProbabilities.state
+rename_internal_nodes.py $tree RAxML_nodeLabelledRootedTree.ANCESTORS RAxML_nodeLabelledRootedTree.nwk
 
 """
 }
 
-syn = params.mutations_raxml.syn
 syn4f = params.mutations_raxml.syn4f
 use_probabilities = params.mutations_raxml.use_probabilities
 mnum192 = params.mutations_raxml.mnum192
 proba_min = params.mutations_raxml.proba_min
-//* @style @multicolumn:{syn, syn4f, use_probabilities}, {mnum192, proba_min}
+//* @style @multicolumn:{syn4f, use_probabilities}, {mnum192, proba_min}
 
-syn = syn == "true" ? "--syn" : ""
 syn4f = syn4f == "true" ? "--syn4f" : ""
 proba = use_probabilities == "true" ? "--proba" : ""
 
@@ -590,48 +763,99 @@ process mutations_raxml {
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
 	if (filename =~ /.*.tsv$/) "mutspec_tables/$filename"
-	else if (filename =~ /.*.log$/) "mutspec_logs/$filename"
+	else if (filename =~ /.*.log$/) "report/$filename"
 	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
+	else if (filename =~ /ms12syn_${label}.txt$/) "tmp/$filename"
 }
 
 input:
- set val(namet), file(tree) from g_189_tree_g_311
- set val(label), file(states1) from g_189_state_g_311
- set val(names2), file(states2) from g_151_state_g_311
+ set val(namet), file(tree) from g_327_tree_g_334
+ set val(label), file(states1) from g_327_state_g_334
+ set val(names2), file(states2) from g_151_state_g_334
 
 output:
- file "*.tsv"  into g_311_outputFileTSV
- file "*.log"  into g_311_logFile
- file "*.pdf"  into g_311_outputFilePdf
+ file "*.tsv"  into g_334_outputFileTSV
+ file "*.log"  into g_334_logFile
+ file "*.pdf"  into g_334_outputFilePdf
+ file "ms12syn_${label}.txt"  into g_334_outputFileTxt_g_358
 
 """
-python3 /export/src/mutspec-utils/scripts/3.collect_mutations.py --tree $tree --states $states1 --states $states2 --gencode $params.gencode $syn $syn4f $proba --no-mutspec --outdir mout
+3.collect_mutations.py --tree $tree --states $states1 --states $states2 \
+	--gencode $params.gencode --syn $syn4f $proba --no-mutspec --outdir mout
+
 mv mout/* .
 mv mutations.tsv observed_mutations_${label}.tsv
 mv expected_mutations.tsv expected_mutations.txt
-mv run.log ${label}_run.log
+mv run.log ${label}_mut_extraction.log
 
-python3 /export/src/mutspec-utils/scripts/calculate_mutspec.py -b observed_mutations_${label}.tsv -e expected_mutations.txt -o . --outgrp $params.OUTGRP -m $mnum192 -l $label -p $proba_min -x pdf
+calculate_mutspec.py -b observed_mutations_${label}.tsv -e expected_mutations.txt -o . \
+	--exclude ${params.OUTGRP},ROOT --mnum192 $mnum192 -l $label $proba --proba_min $proba_min --syn $syn4f --plot -x pdf
+
+cp ms12syn_${label}.tsv ms12syn_${label}.txt
 
 """
 }
 
+replics = params.pyvolve_raxml.replics
+scale_tree = params.pyvolve_raxml.scale_tree
+syn4f = params.pyvolve_raxml.syn4f
+mnum192 = params.pyvolve_raxml.mnum192
+//* @style @multicolumn:{replics, scale_tree}, {syn4f, mnum192}
 
-process extract_terminal_branch_lengths_raxml {
+syn4f = syn4f == "true" ? "--syn4f" : ""
+
+
+process pyvolve_raxml {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /${name}.branches$/) "RAxML/$filename"
+	if (filename =~ /.*.tsv$/) "mutspec_tables/$filename"
+	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
+	else if (filename =~ /.*.log$/) "report/$filename"
 }
 
 input:
- set val(name), file(tree) from g_130_tree_g_109
+ file spectra from g_334_outputFileTxt_g_358
+ set val(label), file(tree) from g_327_tree_g_358
+ set val(name), file(mulal) from g_128_nucl_mulal_g_358
 
 output:
- set val(name), file("${name}.branches")  into g_109_branches
+ file "*.tsv"  into g_358_outputFileTSV
+ file "*.pdf"  into g_358_outputFilePdf
+ file "*.log"  into g_358_logFile
 
 """
-nw_distance -m p -s l -n $tree | sort -grk 2 1>${name}.branches
+nw_prune $tree $params.OUTGRP > ${tree}.ingroup
+echo "Tree outgroup pruned"
+
+nw_labels -L ${tree}.ingroup | grep -v ROOT | xargs -I{} echo -e "{}\tNode{}" > map.txt
+if [ `grep -c NodeNode map.txt` -eq 0 ]; then
+	nw_rename ${tree}.ingroup map.txt > ${tree}.tmp
+	cat ${tree}.tmp > ${tree}.ingroup
+	echo "Internal nodes renamed"
+fi
+
+pyvolve_process.py -a $mulal -t ${tree}.ingroup -s $spectra -o seqfile.fasta -r $replics -c $params.gencode -l $scale_tree --write_anc
+echo "Mutation samples generated"
+
+for fasta_file in seqfile_sample-*.fasta
+do
+	echo "Processing \$fasta_file"
+	alignment2iqtree_states.py \$fasta_file  \${fasta_file}.state
+	3.collect_mutations.py --tree ${tree}.ingroup --states  \${fasta_file}.state --gencode $params.gencode --syn $syn4f --no-mutspec --outdir mout --force
+	cat mout/run.log >> pyvolve_${label}.log
+	echo -e "\n\n">> pyvolve_${label}.log
+	cat mout/mutations.tsv >  \${fasta_file}.mutations
+done
+echo "Mutations extraction done"
+
+concat_mutations.py seqfile_sample-*.fasta.mutations mutations_${label}_pyvolve.tsv
+echo "Mutations concatenation done"
+cat mutations_${label}_pyvolve.tsv
+
+calculate_mutspec.py -b mutations_${label}_pyvolve.tsv -e mout/expected_mutations.tsv -o . \
+	-l ${label}_pyvolve --exclude ${params.OUTGRP},ROOT --syn $syn4f --mnum192 $mnum192 --plot -x pdf
+echo "Mutational spectrum calculated"
 
 """
 }
