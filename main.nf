@@ -5,17 +5,16 @@ THREADS = 1
 //* params.mode =  "single"  //* @dropdown @options:"single, multiple" @description:"How to run pipeline, either on one record or on multiple records. WARNING: if you run mutational spectrum reconstruction on multiple records, you must be TODO"
 //* params.OUTGRP =  "OUTGRP"   //* @input
 
+
 //* autofill
 if ($HOSTNAME == "default"){
 	$SINGULARITY_IMAGE = "/export/src/image_pipeline-2.9.sif"
 	$SINGULARITY_OPTIONS = "--bind /export"
-	params.outdir='/export/kg_pipe/testN'
 }
 
 if ($HOSTNAME == "85.175.149.198"){
 	$SINGULARITY_IMAGE = "/home/dolphin/image_pipeline-2.9.sif"
-	$SINGULARITY_OPTIONS = "--bind /home/dolphin/export"
-	params.outdir='/home/dolphin/runs/NAME'
+	$SINGULARITY_OPTIONS = "--bind /home/dolphin,/scratch/genkvg/mmseqs2_db_tax-specific:/db"
 }
 
 if (params.mode == "multiple"){
@@ -171,7 +170,7 @@ output:
  set val("${name}_sel"), file("${name}_sel.hash")  into g_49_hash_file_g_213
 
 """
-/export/src/dolphin/scripts/header_sel_mod3.pl $query_out_fasta $SPNAME 1>${name}_sel.fasta 2>${name}_sel.hash
+/opt/dolphin/scripts/header_sel_mod3.pl $query_out_fasta $SPNAME 1>${name}_sel.fasta 2>${name}_sel.hash
 
 """
 }
@@ -192,7 +191,7 @@ output:
  file "sequences.fasta"  into g_213_multipleFasta_g_277
 
 """
-/export/src/dolphin/scripts/nuc_coding_mod.pl $hash $DB 1>sequences.fasta
+/opt/dolphin/scripts/nuc_coding_mod.pl $hash $DB 1>sequences.fasta
 
 """
 }
@@ -268,7 +267,7 @@ if (nucleotides_single.toString() == "sequences.fasta") {
 }
 
 """
-/export/src/dolphin/scripts/codon_alig_unique.pl $seqs 1>seqs_unique.fasta
+/opt/dolphin/scripts/codon_alig_unique.pl $seqs 1>seqs_unique.fasta
 echo "$seqs\n$nucleotides_single\n$nucleotides_multiple" > condensation.log
 
 """
@@ -313,7 +312,7 @@ output:
  set val("alignment_checked"),file("alignment_checked.fasta")  into g_128_nucl_mulal_g_70, g_128_nucl_mulal_g_129, g_128_nucl_mulal_g_151, g_128_nucl_mulal_g_357, g_128_nucl_mulal_g_358
 
 """
-/export/src/dolphin/scripts/macse2.pl $mulal alignment_checked.fasta
+/opt/dolphin/scripts/macse2.pl $mulal alignment_checked.fasta
 
 """
 }
@@ -875,7 +874,7 @@ output:
  file "mutnumbers.tsv"  into g_70_outputFileTSV
 
 """
-/export/src/dolphin/scripts/mutnumbers.pl $seqs 1>mutnumbers.tsv
+/opt/dolphin/scripts/mutnumbers.pl $seqs 1>mutnumbers.tsv
 
 """
 }
