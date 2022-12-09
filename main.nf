@@ -4,6 +4,7 @@ params.outdir = 'results'
 THREADS = 1
 //* params.mode =  "single"  //* @dropdown @options:"single, multiple" @description:"How to run pipeline, either on one record or on multiple records. WARNING: if you run mutational spectrum reconstruction on multiple records, you must be TODO"
 //* params.OUTGRP =  "OUTGRP"   //* @input
+//* params.run_pyvolve =  "true"  //* @dropdown @options:"true, false"
 
 
 //* autofill
@@ -286,13 +287,17 @@ output:
  set val(name), file("${name}_mulal.fna")  into g_222_nucl_mulal_g_128
  set val(name), file("${name}_mulal.faa")  into g_222_aa_mulal
 
-when:
-report.toString() == "report_yes.txt"
-
 script:
+if (report.toString() == "report_no.txt") {println "ERROR: Number of sequences too small to build tree"}
+
 name = seqs.toString() - '.fasta'
 
 """
+if [ -f report_no.txt ]; then 
+	cat report_no.txt
+	exit 1
+fi
+
 java -jar /opt/macse_v2.05.jar -prog alignSequences -gc_def $gencode -out_AA ${name}_mulal.faa -out_NT ${name}_mulal.fna -seq $seqs
 """
 }
@@ -309,7 +314,7 @@ input:
  set val(name), file(mulal) from g_222_nucl_mulal_g_128
 
 output:
- set val("alignment_checked"),file("alignment_checked.fasta")  into g_128_nucl_mulal_g_70, g_128_nucl_mulal_g_129, g_128_nucl_mulal_g_151, g_128_nucl_mulal_g_357, g_128_nucl_mulal_g_358
+ set val("alignment_checked"),file("alignment_checked.fasta")  into g_128_nucl_mulal_g_70, g_128_nucl_mulal_g_129, g_128_nucl_mulal_g_151, g_128_nucl_mulal_g_363, g_128_nucl_mulal_g_364
 
 """
 /opt/dolphin/scripts/macse2.pl $mulal alignment_checked.fasta
@@ -413,11 +418,15 @@ output:
  file "*.log"  into g_315_logFile
 
 """
-run_treeshrink.py -t $tree -O treeshrink -o . -q $quantile -x $params.OUTGRP
-mv treeshrink.nwk ${name}_shrinked.nwk
-mv treeshrink_summary.txt ${name}_treeshrink.log
-mv treeshrink.txt ${name}_pruned_nodes.log
-
+if [ `nw_stats $tree | grep nodes | cut -f 2` -gt 8 ]; then
+	run_treeshrink.py -t $tree -O treeshrink -o . -q $quantile -x $params.OUTGRP
+	mv treeshrink.nwk ${name}_shrinked.nwk
+	mv treeshrink_summary.txt ${name}_treeshrink.log
+	mv treeshrink.txt ${name}_pruned_nodes.log
+else
+	cat $tree > ${name}_shrinked.nwk
+	echo "Shrinjing are useless on such small number of sequences" > ${name}_pruned_nodes.log
+fi
 """
 }
 
@@ -482,7 +491,7 @@ input:
  set val(namet), file(tree) from g_302_tree_g_326
 
 output:
- set val("iqtree"), file("iqtree_anc_tree.nwk")  into g_326_tree_g_333, g_326_tree_g_357
+ set val("iqtree"), file("iqtree_anc_tree.nwk")  into g_326_tree_g_333, g_326_tree_g_363
  set val("iqtree"), file("iqtree_anc.state")  into g_326_state_g_333
  file "*.log"  into g_326_logFile
 
@@ -497,7 +506,7 @@ mv anc.iqtree iqtree_anc_report.log
 mv anc.log iqtree_anc.log
 nw_reroot anc.treefile OUTGRP | sed 's/;/ROOT;/' > iqtree_anc_tree.nwk
 
-python3 /export/src/mutspec-utils/scripts/iqtree_states_add_part.py anc.state iqtree_anc.state
+iqtree_states_add_part.py anc.state iqtree_anc.state
 """
 
 }
@@ -530,7 +539,7 @@ output:
  file "*.tsv"  into g_333_outputFileTSV
  file "*.log"  into g_333_logFile
  file "*.pdf"  into g_333_outputFilePdf
- file "ms12syn_${label}.txt"  into g_333_outputFileTxt_g_357
+ file "ms12syn_${label}.txt"  into g_333_outputFileTxt_g_363
 
 """
 3.collect_mutations.py --tree $tree --states $states1 --states $states2 \
@@ -549,6 +558,9 @@ cp ms12syn_${label}.tsv ms12syn_${label}.txt
 """
 }
 
+when:
+params.run_pyvolve == "true"
+
 replics = params.pyvolve_iqtree.replics
 scale_tree = params.pyvolve_iqtree.scale_tree
 syn4f = params.pyvolve_iqtree.syn4f
@@ -562,24 +574,26 @@ process pyvolve_iqtree {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /.*.tsv$/) "mutspec_tables/$filename"
+	if (filename =~ /.*.tsv$/) "simulation/$filename"
 	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
-	else if (filename =~ /.*.log$/) "report/$filename"
+	else if (filename =~ /.*.log$/) "simulation/$filename"
 }
 
 input:
- file spectra from g_333_outputFileTxt_g_357
- set val(label), file(tree) from g_326_tree_g_357
- set val(name), file(mulal) from g_128_nucl_mulal_g_357
+ file spectra from g_333_outputFileTxt_g_363
+ set val(label), file(tree) from g_326_tree_g_363
+ set val(name), file(mulal) from g_128_nucl_mulal_g_363
 
 output:
- file "*.tsv"  into g_357_outputFileTSV
- file "*.pdf"  into g_357_outputFilePdf
- file "*.log"  into g_357_logFile
+ file "*.tsv"  into g_363_outputFileTSV
+ file "*.pdf"  into g_363_outputFilePdf
+ file "*.log"  into g_363_logFile
 
 """
 nw_prune $tree $params.OUTGRP > ${tree}.ingroup
 echo "Tree outgroup pruned"
+awk '/^>/ {P=index(\$1, "OUTGRP")==0} {if(P) print}' $mulal > ${mulal}.ingroup
+echo "Tree outgroup sequence filtered out"
 
 nw_labels -L ${tree}.ingroup | grep -v ROOT | xargs -I{} echo -e "{}\tNode{}" > map.txt
 if [ `grep -c NodeNode map.txt` -eq 0 ]; then
@@ -588,7 +602,15 @@ if [ `grep -c NodeNode map.txt` -eq 0 ]; then
 	echo "Internal nodes renamed"
 fi
 
-pyvolve_process.py -a $mulal -t ${tree}.ingroup -s $spectra -o seqfile.fasta -r $replics -c $params.gencode -l $scale_tree --write_anc
+#filter out sequences with ambigous nucleotides
+cat ${mulal}.ingroup | perl -e '\$p=\$s=""; while (<STDIN>) {chomp; if (\$_=~/^>/) {\$h=\$_; if (\$s!~/[^ACGT]/i) {print "\$p\n\$s\n"} \$p=\$h; \$s=""} else {\$s.=\$_}} if (\$s!~/[^ACGT]/i) {print "\$p\n\$s\n"}' > ${mulal}.clean
+cat ${mulal}.clean 
+if [ `grep -c ">" ${mulal}.clean` -lt 1 ]; then
+	echo -e "There are no sequences without ambigous nucleotides in the alignment.\nInterrupted" > pyvolve_${label}.log
+	exit 0
+fi
+
+pyvolve_process.py -a ${mulal}.clean -t ${tree}.ingroup -s $spectra -o seqfile.fasta -r $replics -c $params.gencode -l $scale_tree --write_anc
 echo "Mutation samples generated"
 
 for fasta_file in seqfile_sample-*.fasta
@@ -661,11 +683,15 @@ output:
  file "*.log"  into g_317_logFile
 
 """
-run_treeshrink.py -t $tree -O treeshrink -o . -q $quantile -x $params.OUTGRP
-mv treeshrink.nwk ${name}_shrinked.nwk
-mv treeshrink_summary.txt ${name}_treeshrink.log
-mv treeshrink.txt ${name}_pruned_nodes.log
-
+if [ `nw_stats $tree | grep nodes | cut -f 2` -gt 8 ]; then
+	run_treeshrink.py -t $tree -O treeshrink -o . -q $quantile -x $params.OUTGRP
+	mv treeshrink.nwk ${name}_shrinked.nwk
+	mv treeshrink_summary.txt ${name}_treeshrink.log
+	mv treeshrink.txt ${name}_pruned_nodes.log
+else
+	cat $tree > ${name}_shrinked.nwk
+	echo "Shrinjing are useless on such small number of sequences" > ${name}_pruned_nodes.log
+fi
 """
 }
 
@@ -730,7 +756,7 @@ input:
  set val(name), file(mulal) from g_129_phylip_g_327
 
 output:
- set val("raxml"),file("RAxML_nodeLabelledRootedTree.nwk")  into g_327_tree_g_334, g_327_tree_g_358
+ set val("raxml"),file("RAxML_nodeLabelledRootedTree.nwk")  into g_327_tree_g_334, g_327_tree_g_364
  set val("raxml"), file("RAxML_marginalAncestralProbabilities.state")  into g_327_state_g_334
  file "RAxML_marginalAncestralStates.fasta"  into g_327_multipleFasta
  file "RAxML_anc_rec.log"  into g_327_logFile
@@ -776,7 +802,7 @@ output:
  file "*.tsv"  into g_334_outputFileTSV
  file "*.log"  into g_334_logFile
  file "*.pdf"  into g_334_outputFilePdf
- file "ms12syn_${label}.txt"  into g_334_outputFileTxt_g_358
+ file "ms12syn_${label}.txt"  into g_334_outputFileTxt_g_364
 
 """
 3.collect_mutations.py --tree $tree --states $states1 --states $states2 \
@@ -795,6 +821,9 @@ cp ms12syn_${label}.tsv ms12syn_${label}.txt
 """
 }
 
+when:
+params.run_pyvolve == "true"
+
 replics = params.pyvolve_raxml.replics
 scale_tree = params.pyvolve_raxml.scale_tree
 syn4f = params.pyvolve_raxml.syn4f
@@ -808,24 +837,26 @@ process pyvolve_raxml {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
 	saveAs: {filename ->
-	if (filename =~ /.*.tsv$/) "mutspec_tables/$filename"
+	if (filename =~ /.*.tsv$/) "simulation/$filename"
 	else if (filename =~ /.*.pdf$/) "mutspec_images/$filename"
-	else if (filename =~ /.*.log$/) "report/$filename"
+	else if (filename =~ /.*.log$/) "simulation/$filename"
 }
 
 input:
- file spectra from g_334_outputFileTxt_g_358
- set val(label), file(tree) from g_327_tree_g_358
- set val(name), file(mulal) from g_128_nucl_mulal_g_358
+ file spectra from g_334_outputFileTxt_g_364
+ set val(label), file(tree) from g_327_tree_g_364
+ set val(name), file(mulal) from g_128_nucl_mulal_g_364
 
 output:
- file "*.tsv"  into g_358_outputFileTSV
- file "*.pdf"  into g_358_outputFilePdf
- file "*.log"  into g_358_logFile
+ file "*.tsv"  into g_364_outputFileTSV
+ file "*.pdf"  into g_364_outputFilePdf
+ file "*.log"  into g_364_logFile
 
 """
 nw_prune $tree $params.OUTGRP > ${tree}.ingroup
 echo "Tree outgroup pruned"
+awk '/^>/ {P=index(\$1, "OUTGRP")==0} {if(P) print}' $mulal > ${mulal}.ingroup
+echo "Tree outgroup sequence filtered out"
 
 nw_labels -L ${tree}.ingroup | grep -v ROOT | xargs -I{} echo -e "{}\tNode{}" > map.txt
 if [ `grep -c NodeNode map.txt` -eq 0 ]; then
@@ -834,7 +865,15 @@ if [ `grep -c NodeNode map.txt` -eq 0 ]; then
 	echo "Internal nodes renamed"
 fi
 
-pyvolve_process.py -a $mulal -t ${tree}.ingroup -s $spectra -o seqfile.fasta -r $replics -c $params.gencode -l $scale_tree --write_anc
+#filter out sequences with ambigous nucleotides
+cat ${mulal}.ingroup | perl -e '\$p=\$s=""; while (<STDIN>) {chomp; if (\$_=~/^>/) {\$h=\$_; if (\$s!~/[^ACGT]/i) {print "\$p\n\$s\n"} \$p=\$h; \$s=""} else {\$s.=\$_}} if (\$s!~/[^ACGT]/i) {print "\$p\n\$s\n"}' > ${mulal}.clean
+cat ${mulal}.clean 
+if [ `grep -c ">" ${mulal}.clean` -lt 1 ]; then
+	echo -e "There are no sequences without ambigous nucleotides in the alignment.\nInterrupted" > pyvolve_${label}.log
+	exit 0
+fi
+
+pyvolve_process.py -a ${mulal}.clean -t ${tree}.ingroup -s $spectra -o seqfile.fasta -r $replics -c $params.gencode -l $scale_tree --write_anc
 echo "Mutation samples generated"
 
 for fasta_file in seqfile_sample-*.fasta
