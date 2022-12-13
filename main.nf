@@ -447,9 +447,9 @@ output:
 """
 nw_distance -m p -s l -n $tree | sort -grk 2 1> ${name}.branches
 
-if [ `head -n 1 ${name}.branches | grep -c OUTGRP` -ne 1 ]; then
-	echo "Something went wrong: outgroup is not furthest leaf in the tree"
+if [ `grep OUTGRP ${name}.branches | cut -f 2 | python3 -c "import sys; print(float(sys.stdin.readline().strip()) > 0)"` == False ]; then
 	cat "${name}.branches"
+	echo "Something went wrong: outgroup is not furthest leaf in the tree"
 	exit 1
 fi
 
@@ -712,9 +712,9 @@ output:
 """
 nw_distance -m p -s l -n $tree | sort -grk 2 1> ${name}.branches
 
-if [ `head -n 1 ${name}.branches | grep -c OUTGRP` -ne 1 ]; then
-	echo "Something went wrong: outgroup is not furthest leaf in the tree"
+if [ `grep OUTGRP ${name}.branches | cut -f 2 | python3 -c "import sys; print(float(sys.stdin.readline().strip()) > 0)"` == False ]; then
 	cat "${name}.branches"
+	echo "Something went wrong: outgroup is not furthest leaf in the tree"
 	exit 1
 fi
 
